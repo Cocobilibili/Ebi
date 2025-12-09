@@ -89,7 +89,7 @@ fn entropy_calculate(p: &Fraction) -> LogDiv {
 
 // default lambda value
 fn default_lambda() -> Fraction {
-    f!(1,100_000) 
+    f!(1,100) 
 }
 
 /* 
@@ -104,7 +104,7 @@ pub fn entropy_eventlog(event_log: EventLog) -> LogDiv {
 
 }*/
 
-
+/* 
 // ---------------------------------------
 //-------entropy with lambda----------------------
 
@@ -144,11 +144,86 @@ pub fn entropy_eventlog(
 
     sum_entropy
 
-}
+}*/
 
 
 // caculate entropy of eventlog
+use std::collections::HashMap;
+// calculate entropy of eventlog (Fraction + LogDiv 精确版)
+pub fn entropy_eventlog(
+    event_log: EventLog,
+    lambda: &Fraction,
+) -> LogDiv {
+    let fsl = FiniteStochasticLanguage::from(event_log);
+    println!("FSL has done");
 
+    // 1. 先按概率分组：Fraction -> 出现次数（trace 种类数）
+    let mut count_by_prob: HashMap<Fraction, usize> = HashMap::new();
+    let mut trace_kinds: usize = 0;
+
+    for (_, prob) in fsl.iter_traces_probabilities() {
+        *count_by_prob.entry(prob.clone()).or_insert(0) += 1;
+        trace_kinds += 1;
+    }
+
+    println!(
+        "[entropy_eventlog] trace_kinds = {}, distinct probabilities = {}",
+        trace_kinds,
+        count_by_prob.len()
+    );
+
+    // ============== 情况一：λ = 0 ====================
+    if lambda.is_zero() {
+        println!("lambda is zero");
+
+        let mut sum_entropy = LogDiv::zero();
+
+        // 对每个不同的 p，只算一次 H(p)，再加 cnt 次
+        for (p, cnt) in count_by_prob {
+            let h_one = entropy_calculate(&p); // H(p) = -p log p（精确）
+
+            for _ in 0..cnt {
+                // 这里用“重复加法”，而不是 h_one *= cnt_frac；
+                // 因为 LogDiv 的 MulAssign<Fraction> 并不是普通的数乘。
+                sum_entropy += h_one.clone();
+            }
+        }
+
+        println!(
+            "[entropy_eventlog λ=0] FINAL H(L) ≈ {:.12}",
+            sum_entropy.approximate()
+        );
+        println!("[entropy_eventlog λ=0] done");
+
+        return sum_entropy;
+    }
+
+    // ============== 情况二：λ > 0 ====================
+    // H_λ(L) = Σ_t [ H(p_t (1-λ)) + H(p_t λ) ]
+    // 按概率分组后，对每个 p 做：
+    //   cnt * H(p(1-λ)) + cnt * H(pλ)
+    let mut sum_entropy = LogDiv::zero();
+    let one_minus = Fraction::one() - lambda.clone();
+
+    for (p, cnt) in count_by_prob {
+        println!("[entropy_eventlog ] H(L) ≈ {:.12}",sum_entropy.approximate());
+        // part 1: H(p (1-λ))
+        let p_main = p.clone() * one_minus.clone();
+        let h_main = entropy_calculate(&p_main);
+
+        // part 2: H(p λ)
+        let p_tail = p.clone() * lambda.clone();
+        let h_tail = entropy_calculate(&p_tail);
+
+        // 把这两个贡献各加 cnt 次
+        for _ in 0..cnt {
+            sum_entropy += h_main.clone();
+            sum_entropy += h_tail.clone();
+        }
+    }
+    println!("[entropy_eventlog final] H(L) ≈ {:.12}",sum_entropy.approximate());
+    sum_entropy
+}
 
 
 // calculate every trace's probability in sdfa 
