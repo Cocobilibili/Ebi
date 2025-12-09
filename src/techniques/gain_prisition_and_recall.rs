@@ -12,10 +12,19 @@ use ebi_objects::{
 //use std::{clone, ops::Div};
 use crate::math::log_div_enum::LogDivEnum;
 use std::ops::Div;
-use ebi_arithmetic::{EbiMatrix, Fraction, FractionMatrix, IdentityMinus, Inversion, Signed, Zero, One};
+use ebi_arithmetic::{ Fraction, Signed, Zero, One};
 use ebi_objects::traits::trace_iterators::IntoRefTraceProbabilityIterator;
 use crate::math::log_div::LogDiv;
 use ebi_arithmetic::f;
+//use std::ops::Neg;
+//use ebi_arithmetic::fraction::approximate::Approximate;
+use ebi_arithmetic::{
+    FractionMatrix,
+    EbiMatrix,
+    IdentityMinus,
+    Inversion,
+};
+
 
 //hilffunktion: valid sdfa
 pub fn is_valid_sdfa(
@@ -64,6 +73,8 @@ pub fn is_valid_sdfa(
 }
 
 
+
+
 // hilffunktion: calculate entropy
 fn entropy_calculate(p: &Fraction) -> LogDiv {
     if p.is_zero() {
@@ -75,9 +86,10 @@ fn entropy_calculate(p: &Fraction) -> LogDiv {
     }
 }
 
+
 // default lambda value
 fn default_lambda() -> Fraction {
-    f!(1, 10)
+    f!(1,100_000) 
 }
 
 /* 
@@ -91,17 +103,26 @@ pub fn entropy_eventlog(event_log: EventLog) -> LogDiv {
     sum_entropy
 
 }*/
-// caculate entropy of eventlog（统一带 λ，λ=0 时退化为原公式）
+
+
+// ---------------------------------------
+//-------entropy with lambda----------------------
+
+// caculate entropy of eventlog
 pub fn entropy_eventlog(
     event_log: EventLog,
     lambda: &Fraction,
 ) -> LogDiv {
-    let fsl = FiniteStochasticLanguage::from(event_log);
 
+    let fsl = FiniteStochasticLanguage::from(event_log);
+    print!("FSL has done\n");
     // λ = 0
+    
     if lambda.is_zero() {
+        print!("lambda is zero\n");
         let mut sum_entropy = LogDiv::zero();
         for (_, prob) in fsl.iter_traces_probabilities() {
+            println!("[entropy_eventlog λ=0] H(L) ≈ {:.12}",sum_entropy.approximate());
             sum_entropy += entropy_calculate(prob);
         }
         return sum_entropy;
@@ -115,14 +136,19 @@ pub fn entropy_eventlog(
         // H(p(1-λ))
         let p_main = prob.clone() * one_minus.clone();
         sum_entropy += entropy_calculate(&p_main);
-
+        println!("[entropy_eventlog λ=0] H(L) ≈ {:.12}",sum_entropy.approximate());
         // H(pλ)
         let p_tail = prob.clone() * lambda.clone();
         sum_entropy += entropy_calculate(&p_tail);
     }
 
     sum_entropy
+
 }
+
+
+// caculate entropy of eventlog
+
 
 
 // calculate every trace's probability in sdfa 
@@ -259,8 +285,87 @@ pub fn gain_numerator(
 }
 
 
+/* 
+-------------------------------------------------------------
+--------------------迭代版本--------------------------------
+----------------------------------------------------------------
+pub fn c_s_iterative(
+    sdfa: &StochasticDeterministicFiniteAutomaton,
+    eps: Fraction,      // convergence threshold in Fraction (e.g., 1 / 10^12)
+    max_iter: usize,    // maximum number of iterations
+) -> Result<Vec<Fraction>> {
+    let n = sdfa.get_max_state() + 1;
+    let s0 = sdfa
+        .get_initial_state()
+        .ok_or_else(|| anyhow!("SDFA has no initial state"))?;
 
-//
+    // c^0 := 0  (no visits initially)
+    let mut c = vec![Fraction::zero(); n];
+    let mut next = vec![Fraction::zero(); n];
+
+    for _iter in 0..max_iter {
+        // 1) Reset next := 0
+        for v in next.iter_mut() {
+            *v = Fraction::zero();
+        }
+
+        // 2) Propagate visits along transitions:
+        //    next[tgt] += c[src] * p(src -> tgt)
+        for (i, &src) in sdfa.get_sources().iter().enumerate() {
+            let tgt = sdfa.get_targets()[i];
+            let p = &sdfa.get_probabilities()[i];
+            if !p.is_zero() {
+                next[tgt] += c[src].clone() * p.clone();
+            }
+        }
+
+        // 3) Add one visit to the initial state in every iteration: +e₀
+        next[s0] += Fraction::one();
+
+        // 4) Compute the infinity-norm of the difference:
+        //    diff = max_s |next[s] - c[s]|
+        let mut diff = Fraction::zero();
+        for s in 0..n {
+            let mut d = &next[s] - &c[s];
+            if d.is_negative() {
+                d = d.neg();
+            }
+            if d > diff {
+                diff = d;
+            }
+        }
+
+        // 5) Update c ← next
+        std::mem::swap(&mut c, &mut next);
+
+        // 6) Check convergence: if max_s |c^{t+1}_s - c^t_s| < eps, stop
+        if diff < eps {
+            break;
+        }
+
+        if diff < eps {
+          println!("[c_s_iterative] converged at iter = {}", _iter);
+          break;
+        }
+
+       if _iter % 1000 == 0 {
+         println!("[c_s_iterative] iter = {}, diff ≈ {}", _iter, diff);
+       }
+    }
+
+    Ok(c)
+}
+pub fn c_s(
+    sdfa: &StochasticDeterministicFiniteAutomaton,
+) -> Result<Vec<Fraction>> {
+    // 1 / 10^12 as a Fraction
+    let eps = f!(1i64, 1_000_000_000_000i64);
+    let max_iter = 20_000;
+    c_s_iterative(sdfa, eps, max_iter)
+}
+    --------------------------------------------------------
+    --------------------------------------------------------
+    */
 
 
 //c_s 
@@ -293,6 +398,7 @@ pub fn c_s(
     let c_s = (&e0 * &f)?; 
     Ok(c_s)
 }
+
 
 // calculate entropy of sdfa
 pub fn entropy_sdfa(
@@ -519,12 +625,91 @@ mod tests {
 
 
     
+#[test]
+fn test_entropy_eventlog() -> Result<()> {
+    use std::{fs, time::Instant};
+
+    let xes_path = r"testfiles\BPI_Challenge_2013_incidents.xes";
+    println!("=== [test_entropy_eventlog_with_lambda] START ===");
+    println!("step 1: reading XES file: {}", xes_path);
+
+    let t_read = Instant::now();
+    let xes = fs::read_to_string(xes_path)?;
+    println!(
+        "  read OK, size = {:.2} MB, cost = {:?}",
+        xes.len() as f64 / (1024.0 * 1024.0),
+        t_read.elapsed()
+    );
+
+      //2. parse XES -> EventLog
+    println!("step 2: parse XES -> EventLog");
+    let t_parse = Instant::now();
+    let eventlog: EventLog = xes.parse()?;
+    println!(
+        "  parse OK, cost = {:?}",
+        t_parse.elapsed()
+    );
+    // 如果 EventLog 有 len() 或 traces().len() 就打印一下
+    // println!("  |L| = {} traces", eventlog.len());
+
+    /*  3. λ = 0
+    println!("step 3: compute entropy with λ = 0");
+    let lambda0 = Fraction::zero();
+    let t_h0 = Instant::now();
+    let h0 = entropy_eventlog(eventlog.clone(), &lambda0);
+    println!(
+        "  entropy λ=0  ≈ {:.12}, cost = {:?}",
+        h0.approximate(),
+        t_h0.elapsed()
+    );*/
+
+    // 4. λ = default
+    println!("step 4: compute entropy with default λ");
+    let lambda_default = default_lambda();
+    let t_hd = Instant::now();
+    let hd = entropy_eventlog(eventlog.clone(), &lambda_default);
+    println!(
+        "  entropy λ=default ≈ {:.12}, cost = {:?}",
+        hd.approximate(),
+        t_hd.elapsed()
+    );
+
+    println!("=== [test_entropy_eventlog_with_lambda] END ===");
+    Ok(())
+}
 
     
+/* 
+#[test]
+fn test_entropy_eventlog() -> Result<()> {
+    use std::fs;
 
-    
+    // 1. read
+    let xes = fs::read_to_string(r"testfiles\BPI_Challenge_2013_incidents.xes")?;
+    let eventlog: EventLog = xes.parse()?;  
+
+    // 2. λ = 0
+    let lambda0 = Fraction::zero();
+    let h0 = entropy_eventlog(eventlog.clone(), &lambda0);
+    println!(
+        "RTF EventLog entropy (λ = 0)       ≈ {:.12}",
+        h0.approximate()
+    );
+
+    /*// 3. λ = default_lambda
+    let lambda_default = default_lambda();
+    let h_def = entropy_eventlog(eventlog.clone(), &lambda_default);
+    println!(
+        "RTF EventLog entropy (λ = default) ≈ {:.12}",
+        h_def.approximate()
+    );*/
 
 
+    Ok(())
+}*/
+
+
+/* 
     #[test]
         //test entropy_eventlog
     fn test_entropy_eventlog(){
@@ -562,6 +747,8 @@ mod tests {
         assert_eq!(entropy2, expected2);
         
     }
+*/
+
 
     #[test]
     //test gain_numerator
@@ -597,11 +784,7 @@ mod tests {
         assert_eq!(_gain2, gain_num);
     }
 
-    fn event_log_to_sdfa(
-        log: &EventLog,
-        ) -> StochasticDeterministicFiniteAutomaton {
-            Into::<StochasticDeterministicFiniteAutomaton>::into(log.clone())
-    }
+
     #[test]
     fn test_entropy_sdfa()  -> Result<()> {
         /*//creste a sdfa
@@ -655,6 +838,10 @@ mod tests {
         assert_eq!(entropy_sdfa.approximate(), e_sdfa.approximate());
         Ok(())*/
 
+        /* 
+        ------------------------------------------
+        mini test
+        -----------------------------------------
 
         // XES -> EventLog
         let event1: EventLog = xes_l1().parse()?;  
@@ -672,10 +859,31 @@ mod tests {
         println!("eventlog entropy ≈ {:.12} bits", entropy1.approximate());
         assert_eq!(h1.approximate(), entropy1.approximate());
 
+        Ok(())*/
+        use std::fs;
+
+        // 1. Load SDFA exported from CLI
+        let fin = fs::read_to_string("testfiles/rtf.sdfa").unwrap();
+        let sdfa: StochasticDeterministicFiniteAutomaton = fin.parse().unwrap();
+
+        // 2. λ = 0
+        let lambda0 = Fraction::zero();
+
+        // 3. Compute entropy
+        let h = entropy_sdfa(&sdfa, &lambda0)?;
+        println!("RTF SDFA entropy = {:.12}", h.approximate());
+/* 
+        // Optional: debug sum of probabilities
+        let probs = sdfa.get_probabilities();
+        let sum: f64 = probs.value().map(|p| p.approximate()).sum();
+        println!("Probability sum = {:.12}", sum);
+*/
         Ok(())
-
     }
+         
+    
 
+/* 
     #[test]
     fn test_entropy_eventlog_with_lambda() {
         let lambda0 = Fraction::zero();
@@ -713,7 +921,6 @@ mod tests {
         println!("H(A, λ=0)    ≈ {:.12}", h0.approximate());
         println!("H(A, λ=1e-6) ≈ {:.12}", h_lambda.approximate());
 
-    // 直接在 FractionEnum 上比较：H(A, λ) >= H(A, 0)
         let a = h_lambda.approximate();
         let b = h0.approximate();
         assert!(
@@ -724,7 +931,7 @@ mod tests {
         );
 
         Ok(())
-    }
+    }*/
 /* 
     #[test]
     fn test_potential_gain_default_lambda_smoke() -> Result<()> {
@@ -737,7 +944,6 @@ mod tests {
         println!("P_default(λ=1e-6) ≈ {:.12}", p.approximate());
         println!("R_default(λ=1e-6) ≈ {:.12}", r.approximate());
 
-        // 不做严格数值断言，只要是正常有限值即可
         assert!(p.approximate().is_finite());
         assert!(r.approximate().is_finite());
 

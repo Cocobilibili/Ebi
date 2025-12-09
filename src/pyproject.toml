@@ -1,12 +1,38 @@
 [build-system]
-requires = ["maturin>=1,<2"]
+requires = ["maturin>=1.0,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "ebi"
-requires-python = ">=3.7"
-classifiers = [
-    "Programming Language :: Rust",
-    "Programming Language :: Python :: Implementation :: CPython",
-    "Programming Language :: Python :: Implementation :: PyPy",
+name = "ebi-pm"
+dynamic = ["version"]              
+requires-python = ">=3.7"         
+dependencies = [
+  "pm4py",
 ]
+authors = [
+  { name = "Sander Leemans" },
+  { name = "Leonhard Mühlmeyer" },
+  { name = "Tian Li" },
+]
+description = "Ebi: a stochastic process mining utility"
+readme = "README.md"
+keywords = [
+  "process mining",
+  "stochastic process mining",
+  "business process analysis",
+]
+classifiers = [
+  "Programming Language :: Rust",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.7",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+]
+
+[tool.maturin]
+bindings = "pyo3"
+features = ["python"]
